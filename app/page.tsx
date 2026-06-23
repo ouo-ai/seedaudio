@@ -10,10 +10,13 @@ import {
   Menu,
   X,
   Play,
-  Square,
   Wand2,
   FileText,
   Radio,
+  Loader2,
+  CheckCircle2,
+  AlertTriangle,
+  Download,
 } from "lucide-react"
 import { AnimatedText } from "@/components/animated-text"
 import { seedModels, useCases } from "@/lib/experience-data"
@@ -99,49 +102,129 @@ function SpectrogramAccent() {
   )
 }
 
-// ─── Demo console preview ─────────────────────────────────────────────────────
-function AudioConsolePreview() {
-  const [isPlaying, setIsPlaying] = useState(false)
-  const [selectedModel, setSelectedModel] = useState("SeedTTS")
-  const [selectedLang, setSelectedLang] = useState("English")
-  const [progress, setProgress] = useState(0)
-  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  const models = ["SeedTTS", "SeedASR", "Seed-Music", "Live"]
-  const languages = ["English", "Mandarin", "Japanese", "Spanish", "French", "Korean"]
-
-  const sampleText =
-    "Seed Audio delivers natural, expressive voice synthesis with state-of-the-art prosody and multilingual support."
-  const transcript = [
-    { time: "0.0s", word: "Seed" },
-    { time: "0.3s", word: "Audio" },
-    { time: "0.6s", word: "delivers" },
-    { time: "1.1s", word: "natural," },
-    { time: "1.5s", word: "expressive" },
-    { time: "2.0s", word: "voice" },
-    { time: "2.4s", word: "synthesis..." },
+// ─── Production KIE audio console ─────────────────────────────────────────────
+function AudioConsolePreview({ instanceId = "primary" }: { instanceId?: string }) {
+  const audioModels = [
+    {
+      id: "elevenlabs/text-to-speech-turbo-2-5",
+      label: "Turbo TTS",
+      description: "Fast production voice generation",
+    },
+    {
+      id: "elevenlabs/text-to-speech-multilingual-v2",
+      label: "Multilingual TTS",
+      description: "Natural speech for global content",
+    },
+  ] as const
+  const voices = ["Rachel", "Adam", "Bella", "Antoni", "Elli"]
+  const languages = [
+    { label: "Auto", value: "" },
+    { label: "English", value: "en" },
+    { label: "Mandarin", value: "zh" },
+    { label: "Japanese", value: "ja" },
+    { label: "Spanish", value: "es" },
+    { label: "French", value: "fr" },
+    { label: "Korean", value: "ko" },
   ]
+  const availableApis = ["TTS Turbo 2.5", "Multilingual v2", "Dialogue v3", "Audio Isolation"]
 
-  useEffect(() => {
-    if (isPlaying) {
-      intervalRef.current = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) {
-            setIsPlaying(false)
-            return 0
-          }
-          return prev + 0.8
-        })
-      }, 50)
-    } else {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-    return () => {
-      if (intervalRef.current) clearInterval(intervalRef.current)
-    }
-  }, [isPlaying])
+  const [selectedModel, setSelectedModel] = useState<(typeof audioModels)[number]["id"]>(audioModels[0].id)
+  const [selectedVoice, setSelectedVoice] = useState("Rachel")
+  const [selectedLang, setSelectedLang] = useState("")
+  const [text, setText] = useState(
+    "Seed Audio AI turns launch copy, product scripts, and learning content into production voice output.",
+  )
+  const [status, setStatus] = useState<"idle" | "submitting" | "polling" | "success" | "error">("idle")
+  const [taskId, setTaskId] = useState("")
+  const [progress, setProgress] = useState(0)
+  const [audioUrl, setAudioUrl] = useState("")
+  const [error, setError] = useState("")
+  const requestIdRef = useRef(0)
+  const voiceId = `voice-${instanceId}`
+  const languageId = `language-${instanceId}`
+  const audioTextId = `audioText-${instanceId}`
 
-  const activeWordIndex = Math.floor((progress / 100) * transcript.length)
+  const isBusy = status === "submitting" || status === "polling"
+  const selectedModelInfo = audioModels.find((model) => model.id === selectedModel) ?? audioModels[0]
+
+  async function pollTask(id: string, requestId: number) {
+    setStatus("polling")
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      if (requestId !== requestIdRef.current) return
+      await new Promise((resolve) => setTimeout(resolve, attempt === 0 ? 1200 : Math.min(3200 + attempt * 200, 8000)))
+
+      const response = await fetch(`/api/kie/audio/${encodeURIComponent(id)}`, { cache: "no-store" })
+      const data = await response.json().catch(() => null)
+
+      if (!response.ok) {
+        setStatus("error")
+        setError(data?.error || "Unable to read KIE task status.")
+        return
+      }
+
+      setProgress(typeof data.progress === "number" ? data.progress : Math.min(95, 15 + attempt * 4))
+
+      if (data.state === "success") {
+        const firstUrl = Array.isArray(data.audioUrls) ? data.audioUrls[0] : ""
+        setAudioUrl(firstUrl || "")
+        setProgress(100)
+        setStatus("success")
+        setError(firstUrl ? "" : "Task completed, but no audio URL was returned.")
+        return
+      }
+
+      if (data.state === "fail") {
+        setStatus("error")
+        setError(data.failMsg || "KIE audio generation failed.")
+        return
+      }
+    }
+
+    setStatus("error")
+    setError("KIE task timed out before returning a final audio result.")
+  }
+
+  async function createAudioTask() {
+    const requestId = requestIdRef.current + 1
+    requestIdRef.current = requestId
+    setStatus("submitting")
+    setError("")
+    setTaskId("")
+    setAudioUrl("")
+    setProgress(6)
+
+    const response = await fetch("/api/kie/audio", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model: selectedModel,
+        text,
+        voice: selectedVoice,
+        languageCode: selectedLang,
+        speed: 1,
+        stability: 0.5,
+        similarityBoost: 0.75,
+        style: 0,
+      }),
+    })
+
+    const data = await response.json().catch(() => null)
+    if (!response.ok) {
+      setStatus("error")
+      setError(data?.error || "KIE audio task could not be created.")
+      return
+    }
+
+    setTaskId(data.taskId)
+    setProgress(12)
+    void pollTask(data.taskId, requestId)
+  }
+
+  function cancelPolling() {
+    requestIdRef.current += 1
+    setStatus("idle")
+    setProgress(0)
+  }
 
   return (
     <div className="w-full rounded-[20px] border border-white/10 bg-[#0D1117] overflow-hidden shadow-2xl">
@@ -152,10 +235,10 @@ function AudioConsolePreview() {
           <div className="w-3 h-3 rounded-full bg-[#FEBC2E]" />
           <div className="w-3 h-3 rounded-full bg-[#28C840]" />
         </div>
-        <span className="text-[11px] text-[#A7ABB3] font-mono">seed-audio — console preview</span>
+        <span className="text-[11px] text-[#A7ABB3] font-mono">seed-audio — production kie api</span>
         <div className="flex items-center gap-2">
           <span className="text-[10px] px-2 py-0.5 rounded-full border border-cyan-500/30 text-cyan-400 font-mono">
-            PREVIEW
+            LIVE API
           </span>
         </div>
       </div>
@@ -163,76 +246,115 @@ function AudioConsolePreview() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-0 divide-y md:divide-y-0 md:divide-x divide-white/8">
         {/* Left: Input panel */}
         <div className="p-5 flex flex-col gap-4">
-          {/* Model selector */}
           <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Model</div>
-            <div className="flex flex-wrap gap-2">
-              {models.map((m) => (
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">KIE audio model</div>
+            <div className="grid grid-cols-1 gap-2">
+              {audioModels.map((model) => (
                 <button
-                  key={m}
-                  onClick={() => setSelectedModel(m)}
-                  className={`px-3 py-1 rounded-lg text-xs font-mono border transition-all duration-200 ${
-                    selectedModel === m
+                  key={model.id}
+                  onClick={() => setSelectedModel(model.id)}
+                  className={`px-3 py-2 rounded-lg text-left text-xs font-mono border transition-all duration-200 ${
+                    selectedModel === model.id
                       ? "bg-cyan-500/15 border-cyan-500/40 text-cyan-300"
                       : "bg-white/4 border-white/10 text-[#A7ABB3] hover:border-white/20"
                   }`}
                 >
-                  {m}
+                  <span className="block text-[#F2F3F5]">{model.label}</span>
+                  <span className="block mt-1 text-[10px] text-[#A7ABB3]">{model.description}</span>
                 </button>
               ))}
             </div>
           </div>
 
-          {/* Language selector */}
-          <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Language</div>
-            <div className="flex flex-wrap gap-2">
-              {languages.map((l) => (
-                <button
-                  key={l}
-                  onClick={() => setSelectedLang(l)}
-                  className={`px-3 py-1 rounded-lg text-xs font-mono border transition-all duration-200 ${
-                    selectedLang === l
-                      ? "bg-violet-500/15 border-violet-500/40 text-violet-300"
-                      : "bg-white/4 border-white/10 text-[#A7ABB3] hover:border-white/20"
-                  }`}
-                >
-                  {l}
-                </button>
-              ))}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2" htmlFor={voiceId}>
+                Voice
+              </label>
+              <select
+                id={voiceId}
+                value={selectedVoice}
+                onChange={(event) => setSelectedVoice(event.target.value)}
+                className="w-full rounded-lg bg-white/4 border border-white/10 px-3 py-2 text-xs text-[#F2F3F5] font-mono focus:outline-none focus:border-cyan-400/50"
+              >
+                {voices.map((voice) => (
+                  <option key={voice} value={voice} className="bg-[#0D1117]">
+                    {voice}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2" htmlFor={languageId}>
+                Language
+              </label>
+              <select
+                id={languageId}
+                value={selectedLang}
+                onChange={(event) => setSelectedLang(event.target.value)}
+                className="w-full rounded-lg bg-white/4 border border-white/10 px-3 py-2 text-xs text-[#F2F3F5] font-mono focus:outline-none focus:border-violet-400/50"
+              >
+                {languages.map((language) => (
+                  <option key={language.label} value={language.value} className="bg-[#0D1117]">
+                    {language.label}
+                  </option>
+                ))}
+              </select>
             </div>
           </div>
 
-          {/* Text input */}
           <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Input text</div>
-            <div className="w-full rounded-lg bg-white/4 border border-white/10 p-3 text-xs text-[#F2F3F5]/80 font-mono leading-relaxed min-h-[72px]">
-              {sampleText}
-            </div>
+            <label className="block text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2" htmlFor={audioTextId}>
+              Input text
+            </label>
+            <textarea
+              id={audioTextId}
+              value={text}
+              onChange={(event) => setText(event.target.value.slice(0, 500))}
+              className="w-full rounded-lg bg-white/4 border border-white/10 p-3 text-xs text-[#F2F3F5]/80 font-mono leading-relaxed min-h-[96px] resize-none focus:outline-none focus:border-cyan-400/50"
+            />
+            <div className="mt-2 text-[10px] text-[#A7ABB3]/70 font-mono">{text.length}/500 chars</div>
           </div>
 
-          {/* Generate button — clearly labeled as demo */}
           <button
-            onClick={() => {
-              setProgress(0)
-              setIsPlaying(true)
-            }}
-            disabled={isPlaying}
+            onClick={createAudioTask}
+            disabled={isBusy || text.trim().length < 4}
             className="flex items-center justify-center gap-2 w-full py-2.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs font-mono hover:bg-cyan-500/20 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            <Wand2 className="w-3.5 h-3.5" />
-            {isPlaying ? "Generating preview..." : "Preview synthesis (demo)"}
+            {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wand2 className="w-3.5 h-3.5" />}
+            {status === "submitting" ? "Creating KIE task..." : status === "polling" ? "Generating audio..." : "Generate production audio"}
           </button>
         </div>
 
         {/* Right: Output / waveform panel */}
         <div className="p-5 flex flex-col gap-4">
-          {/* Waveform */}
           <div>
-            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Waveform</div>
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Production status</div>
             <div className="rounded-lg bg-white/4 border border-white/8 p-3 flex flex-col gap-3">
-              <WaveformBars count={40} active={isPlaying} color="cyan" />
-              {/* Playback bar */}
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="text-sm font-mono text-[#F2F3F5]">
+                    {status === "success"
+                      ? "Audio ready"
+                      : status === "error"
+                        ? "Task needs attention"
+                        : isBusy
+                          ? "KIE task running"
+                          : "Ready"}
+                  </div>
+                  <div className="text-[10px] text-[#A7ABB3] font-mono mt-1">{selectedModelInfo.id}</div>
+                </div>
+                {status === "success" ? (
+                  <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                ) : status === "error" ? (
+                  <AlertTriangle className="w-5 h-5 text-amber-300" />
+                ) : isBusy ? (
+                  <Loader2 className="w-5 h-5 text-cyan-300 animate-spin" />
+                ) : (
+                  <Radio className="w-5 h-5 text-cyan-300" />
+                )}
+              </div>
+              <WaveformBars count={40} active={isBusy || status === "success"} color="cyan" />
               <div className="relative h-1 rounded-full bg-white/10">
                 <div
                   className="absolute inset-y-0 left-0 rounded-full bg-cyan-400 transition-all duration-100"
@@ -240,54 +362,73 @@ function AudioConsolePreview() {
                 />
               </div>
               <div className="flex items-center justify-between">
-                <button
-                  onClick={() => {
-                    if (isPlaying) {
-                      setIsPlaying(false)
-                    } else {
-                      setProgress(0)
-                      setIsPlaying(true)
-                    }
-                  }}
-                  className="flex items-center gap-1.5 text-[10px] font-mono text-[#A7ABB3] hover:text-cyan-300 transition-colors"
-                >
-                  {isPlaying ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
-                  {isPlaying ? "Stop" : "Play preview"}
-                </button>
-                <span className="text-[10px] font-mono text-[#A7ABB3]">
-                  {Math.floor(progress * 0.035)}s / 3.5s
-                </span>
+                <span className="text-[10px] font-mono text-[#A7ABB3]">{taskId || "No task yet"}</span>
+                {isBusy ? (
+                  <button
+                    onClick={cancelPolling}
+                    className="text-[10px] font-mono text-[#A7ABB3] hover:text-amber-300 transition-colors"
+                  >
+                    Stop polling
+                  </button>
+                ) : null}
               </div>
             </div>
           </div>
 
-          {/* Transcript */}
           <div>
             <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">
-              Transcript alignment
+              Audio result
             </div>
-            <div className="rounded-lg bg-white/4 border border-white/8 p-3 flex flex-wrap gap-1.5">
-              {transcript.map((t, i) => (
-                <span
-                  key={i}
-                  className={`px-1.5 py-0.5 rounded text-[11px] font-mono transition-all duration-200 ${
-                    i <= activeWordIndex && isPlaying
-                      ? "bg-cyan-500/20 text-cyan-200"
-                      : "text-[#A7ABB3]"
-                  }`}
-                >
-                  {t.word}
-                </span>
-              ))}
-            </div>
-            <div className="text-[10px] text-[#A7ABB3]/60 mt-2 font-mono">
-              * Visual demonstration only — no audio is generated
+            <div className="rounded-lg bg-white/4 border border-white/8 p-3 min-h-[124px] flex flex-col justify-center">
+              {audioUrl ? (
+                <div className="space-y-3">
+                  <audio controls src={audioUrl} className="w-full" />
+                  <div className="flex flex-wrap gap-2">
+                    <a
+                      href={audioUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/10 px-2.5 py-1 text-[10px] font-mono text-cyan-300 hover:bg-cyan-500/20"
+                    >
+                      <Play className="h-3 w-3" />
+                      Open audio
+                    </a>
+                    <a
+                      href={audioUrl}
+                      download
+                      className="inline-flex items-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2.5 py-1 text-[10px] font-mono text-[#A7ABB3] hover:text-[#F2F3F5]"
+                    >
+                      <Download className="h-3 w-3" />
+                      Download
+                    </a>
+                  </div>
+                </div>
+              ) : error ? (
+                <p className="text-xs text-amber-200 font-mono leading-relaxed">{error}</p>
+              ) : (
+                <p className="text-xs text-[#A7ABB3] font-mono leading-relaxed">
+                  Submit text to create a KIE production audio task. Results appear here when the task completes.
+                </p>
+              )}
             </div>
           </div>
 
-          {/* Quality badges */}
+          <div>
+            <div className="text-[10px] uppercase tracking-[0.15em] text-[#A7ABB3] mb-2">Available KIE audio APIs</div>
+            <div className="rounded-lg bg-white/4 border border-white/8 p-3 flex flex-wrap gap-1.5">
+              {availableApis.map((api) => (
+                <span
+                  key={api}
+                  className="px-1.5 py-0.5 rounded text-[11px] font-mono bg-white/5 text-[#A7ABB3]"
+                >
+                  {api}
+                </span>
+              ))}
+            </div>
+          </div>
+
           <div className="flex flex-wrap gap-2">
-            {["Demo UI", "No API call", "Consent first", "Research guide"].map((badge) => (
+            {["KIE API", "Production task", "Server-side key", "Consent required"].map((badge) => (
               <span
                 key={badge}
                 className="px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[10px] font-mono text-[#A7ABB3]"
@@ -430,7 +571,7 @@ export default function SeedAudioPage() {
   }
 
   const navLinks = [
-    { label: "Demo", id: "demo" },
+    { label: "API", id: "demo" },
     { label: "Capabilities", id: "capabilities" },
     { label: "Models", id: "models" },
     { label: "Use Cases", id: "use-cases" },
@@ -578,16 +719,16 @@ export default function SeedAudioPage() {
               className="text-[#A7ABB3] text-base md:text-lg max-w-[560px] mx-auto mb-8 leading-relaxed stagger-reveal"
               style={{ animationDelay: "180ms" }}
             >
-              Explore SeedTTS, SeedASR, Seed-Music, and live speech research from ByteDance Seed — powering
-              natural voice generation, multilingual synthesis, and enterprise audio APIs.
+              Explore SeedTTS, SeedASR, Seed-Music, and live speech research from ByteDance Seed, then generate
+              production voice output through a server-side KIE audio API workflow.
             </p>
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 stagger-reveal" style={{ animationDelay: "270ms" }}>
               <Button
                 onClick={() => scrollToSection("demo")}
-                className="glass-button px-8 py-6 text-base rounded-full bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 hover:border-cyan-500/50 transition-all duration-300 text-cyan-200"
-              >
-                Explore demo
-              </Button>
+              className="glass-button px-8 py-6 text-base rounded-full bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 hover:border-cyan-500/50 transition-all duration-300 text-cyan-200"
+            >
+              Generate audio
+            </Button>
               <Button
                 onClick={() => scrollToSection("models")}
                 className="glass-button px-8 py-6 text-base rounded-full bg-white/5 border border-white/10 hover:bg-white/10 hover:border-white/20 transition-all duration-300 text-white"
@@ -607,7 +748,7 @@ export default function SeedAudioPage() {
                   transition: "transform 0.05s linear",
                 }}
               >
-                <AudioConsolePreview />
+                <AudioConsolePreview instanceId="hero" />
               </div>
             </div>
           </div>
@@ -697,16 +838,16 @@ export default function SeedAudioPage() {
         </div>
       </section>
 
-      {/* ── Demo console section ── */}
+      {/* ── Production API console section ── */}
       <section id="demo" className="relative py-20 md:py-32 px-4 animate-on-scroll bg-[#080C14]">
         <div className="max-w-[1120px] w-full mx-auto">
           <div className="text-center mb-12 md:mb-16">
             <div className="text-[10px] md:text-xs uppercase tracking-[0.15em] text-[#A7ABB3] mb-6 flex items-center justify-center gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-              Interactive demo preview
+              Production KIE audio API
             </div>
             <h2 className="font-serif text-[32px] leading-[1.15] md:text-[48px] md:leading-[1.1] font-medium mb-6 text-balance">
-              Try the{" "}
+              Generate with the{" "}
               <span
                 style={{
                   background: "linear-gradient(135deg, #22d3ee 0%, #a78bfa 100%)",
@@ -719,11 +860,11 @@ export default function SeedAudioPage() {
               </span>
             </h2>
             <p className="text-[#A7ABB3] text-sm md:text-base max-w-[560px] mx-auto leading-relaxed">
-              A visual walkthrough of the Seed Audio generation workflow — model selection, language, synthesis,
-              and transcript alignment. This is a UI preview; no audio is generated client-side.
+              Create real production audio tasks through KIE.ai audio models. Requests run through this site&apos;s
+              server-side API route so the KIE key stays off the client.
             </p>
           </div>
-          <AudioConsolePreview />
+          <AudioConsolePreview instanceId="section" />
         </div>
       </section>
 
@@ -1044,12 +1185,12 @@ export default function SeedAudioPage() {
               {
                 question: "Is this site the official ByteDance or BytePlus Seed Audio product?",
                 answer:
-                  "No. Seed Audio AI (seedaudioai.ai) is an independent informational and research guide covering Seed Audio capabilities. It is not affiliated with ByteDance, BytePlus, or TikTok. For official enterprise API access, visit BytePlus directly.",
+                  "No. Seed Audio AI (seedaudioai.ai) is an independent product and research guide. It is not affiliated with ByteDance, BytePlus, or TikTok. The production audio generator on this site uses KIE.ai audio APIs, not an official ByteDance or BytePlus endpoint.",
               },
               {
-                question: "How do I integrate Seed Speech into my product?",
+                question: "Which production audio API does this site use?",
                 answer:
-                  "Enterprise integration is available through BytePlus Seed Speech, which provides API access to natural voice generation, multilingual synthesis, speech-to-text, voice replication, and real-time interpretation capabilities. Visit the BytePlus documentation for SDK and API integration guides.",
+                  "The production generator uses KIE.ai Market audio APIs, currently selecting ElevenLabs text-to-speech models through KIE's asynchronous task API. The site creates tasks server-side and polls KIE for the final audio result.",
               },
             ].map((faq, i) => (
               <div
@@ -1103,7 +1244,7 @@ export default function SeedAudioPage() {
         <div className="max-w-[800px] w-full mx-auto text-center relative z-10">
           <div className="inline-flex items-center gap-2 glass-pill px-4 py-2 rounded-full mb-8 text-xs md:text-sm text-[#A7ABB3]">
             <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />
-            Seed Audio AI — Independent Guide
+            Seed Audio AI — Production Audio API
           </div>
 
           <h2 className="font-serif text-[40px] leading-[1.15] md:text-[64px] md:leading-[1.1] font-medium mb-6 text-balance">
@@ -1120,8 +1261,8 @@ export default function SeedAudioPage() {
             </span>
           </h2>
           <p className="text-[#A7ABB3] text-base md:text-lg mb-10 leading-relaxed max-w-[560px] mx-auto">
-            Explore SeedTTS, SeedASR, and Seed-Music capabilities. Integrate enterprise voice APIs through BytePlus,
-            or join the waitlist to stay updated on Seed Audio research.
+            Explore SeedTTS, SeedASR, and Seed-Music capabilities, then generate production voice output through the
+            server-side KIE audio API integration.
           </p>
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
@@ -1129,7 +1270,7 @@ export default function SeedAudioPage() {
               onClick={() => scrollToSection("demo")}
               className="glass-button text-base rounded-full bg-cyan-500/10 border border-cyan-500/30 hover:bg-cyan-500/20 hover:border-cyan-500/50 transition-all duration-300 text-cyan-200 px-8 py-6"
             >
-              Try demo preview
+              Generate audio
             </Button>
             <Button
               onClick={() => scrollToSection("faq")}
@@ -1149,8 +1290,7 @@ export default function SeedAudioPage() {
             <div className="flex flex-col gap-4">
               <div className="text-base font-semibold font-mono text-cyan-300">Seed Audio AI</div>
               <p className="text-xs text-[#A7ABB3] leading-relaxed">
-                Independent guide to AI voice synthesis, SeedTTS, SeedASR, Seed-Music, and multilingual speech
-                generation from ByteDance Seed research.
+                Independent Seed Audio guide with production KIE audio API generation for voice synthesis workflows.
               </p>
               <div className="flex flex-wrap gap-2 mt-2">
                 {sourceLinks.slice(0, 2).map((source) => (
@@ -1203,7 +1343,7 @@ export default function SeedAudioPage() {
             <div className="flex flex-col gap-4">
               <div className="text-xs uppercase tracking-[0.15em] text-[#F2F3F5] font-semibold mb-2">Stay updated</div>
               <p className="text-xs text-[#A7ABB3] mb-3">
-                Get updates on Seed Audio AI research and new capabilities.
+                Get updates on Seed Audio AI research and production audio capabilities.
               </p>
               <div className="flex flex-col gap-2">
                 <input
@@ -1231,7 +1371,7 @@ export default function SeedAudioPage() {
             <p className="text-[#A7ABB3]/50 text-[11px] leading-relaxed max-w-[720px]">
               Seed Audio AI is an independent informational site and is not affiliated with ByteDance, BytePlus,
               or TikTok. All product names, trademarks, and research references belong to their respective owners.
-              This site does not provide a production AI audio API.
+              Production audio generation is powered by server-side KIE.ai audio API calls.
             </p>
           </div>
         </div>

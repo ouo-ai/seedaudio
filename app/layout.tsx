@@ -12,11 +12,11 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? "https://seedaudioai.ai"
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: "Seed Audio AI | SeedTTS, SeedASR & Speech Guide",
+    default: "Seed Audio AI | Production Audio API",
     template: "%s | Seed Audio AI",
   },
   description:
-    "Explore Seed Audio AI with SeedTTS, SeedASR, Seed-Music, use cases, model guidance, and responsible voice AI notes for creators and developers.",
+    "Explore Seed Audio AI with SeedTTS, SeedASR, Seed-Music, and production KIE audio API generation for creators and developers.",
   keywords: [
     "Seed Audio",
     "Seed Audio AI",
@@ -53,23 +53,23 @@ export const metadata: Metadata = {
     locale: "en_US",
     url: SITE_URL,
     siteName: "Seed Audio AI",
-    title: "Seed Audio AI | SeedTTS, SeedASR & Speech Guide",
+    title: "Seed Audio AI | Production Audio API",
     description:
-      "Explore Seed Audio AI with SeedTTS, SeedASR, Seed-Music, use cases, model guidance, and responsible voice AI notes.",
+      "Explore Seed Audio AI with SeedTTS, SeedASR, Seed-Music, and production KIE audio API generation.",
     images: [
       {
         url: `${SITE_URL}/opengraph-image`,
         width: 1200,
         height: 630,
-        alt: "Seed Audio AI — AI Voice & Speech Generation",
+        alt: "Seed Audio AI — Production KIE Audio API",
       },
     ],
   },
   twitter: {
     card: "summary_large_image",
-    title: "Seed Audio AI | SeedTTS, SeedASR & Speech Guide",
+    title: "Seed Audio AI | Production Audio API",
     description:
-      "Independent guide to Seed Audio AI, SeedTTS, SeedASR, Seed-Music, and responsible voice AI use cases.",
+      "Independent guide to Seed Audio AI, SeedTTS, SeedASR, Seed-Music, and production KIE audio API use cases.",
     images: [`${SITE_URL}/opengraph-image`],
     creator: "@seedaudioai",
   },
@@ -132,14 +132,14 @@ const jsonLd = {
       applicationCategory: "ReferenceApplication",
       operatingSystem: "Web",
       description:
-        "Independent web guide and demo preview covering Seed Audio research, SeedTTS text-to-speech, SeedASR speech recognition, Seed-Music generation, and responsible audio AI use cases. Not affiliated with ByteDance, BytePlus, or TikTok.",
+        "Independent web guide and production KIE audio API generator covering Seed Audio research, SeedTTS text-to-speech, SeedASR speech recognition, Seed-Music generation, and responsible audio AI use cases. Not affiliated with ByteDance, BytePlus, or TikTok.",
       url: SITE_URL,
       offers: {
         "@type": "Offer",
         price: "0",
         priceCurrency: "USD",
         availability: "https://schema.org/InStock",
-        description: "Free informational guide and visual demo preview; no production audio API is provided by this site.",
+        description: "Production audio generation is provided through server-side KIE.ai audio API calls.",
       },
       featureList: [
         "SeedTTS text-to-speech synthesis",
