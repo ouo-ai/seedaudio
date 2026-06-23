@@ -1,0 +1,13 @@
+.env
+.env.*
+!.env.example
+
+node_modules
+.next
+out
+dist
+
+.v0-*.json
+.playwright-cli
+output
+*.log
